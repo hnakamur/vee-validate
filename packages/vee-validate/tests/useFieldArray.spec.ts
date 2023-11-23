@@ -1,5 +1,5 @@
 import { useForm, useField, useFieldArray, FieldEntry, FormContext, FieldArrayContext } from '@/vee-validate';
-import { defineComponent, nextTick, onMounted, Ref } from 'vue';
+import { defineComponent, nextTick, onMounted, watch, Ref } from 'vue';
 import * as yup from 'yup';
 import { mountWithHoc, flushPromises } from './helpers';
 
@@ -583,4 +583,64 @@ test('child sees an error for invalid value input after insert', async () => {
   form.setFieldValue('emails.1', 'a');
   await flushPromises();
   expect(childrenErrors.get(1).value).toStrictEqual(['emails[1] must be a valid email']);
+});
+
+// #4559
+test('updates initialValue correctly after useFieldArray insert', async () => {
+  const childrenInitialValues = new Map();
+  const InputText = defineComponent({
+    props: {
+      name: {
+        type: String,
+        required: true,
+      },
+      debugKey: {
+        type: Number,
+        required: true,
+      },
+    },
+    setup(props) {
+      const { value, meta } = useField(() => props.name);
+      watch(meta, () => childrenInitialValues.set(props.debugKey, meta.initialValue));
+      return {
+        value,
+      };
+    },
+    template: '<input v-model="value" />',
+  });
+
+  mountWithHoc({
+    components: {
+      InputText,
+    },
+    setup() {
+      const { setFieldValue } = useForm({
+        initialValues: {
+          emails: ['bad-addr@', 'good@example.com'],
+        },
+        validationSchema: yup.object({
+          emails: yup.array().of(yup.string().email()),
+        }),
+      });
+
+      const childName = (index: number) => `emails[${index}]`;
+      const { fields, insert } = useFieldArray('emails');
+      onMounted(() => {
+        insert(1, 'b');
+        nextTick(() => setFieldValue('emails.2', 'a'));
+      });
+
+      return {
+        childName,
+        fields,
+      };
+    },
+    template: `
+      <InputText v-for="(field, index) of fields"
+      :name="childName(index)" :key="field.key" :debugKey="field.key"/>
+    `,
+  });
+
+  await flushPromises();
+  expect([0, 1, 2].map(key => childrenInitialValues.get(key))).toStrictEqual(['bad-addr@', 'good@example.com', 'b']);
 });
