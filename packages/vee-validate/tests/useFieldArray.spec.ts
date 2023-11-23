@@ -1,5 +1,5 @@
-import { useForm, useFieldArray, FieldEntry, FormContext, FieldArrayContext } from '@/vee-validate';
-import { nextTick, onMounted, Ref } from 'vue';
+import { useForm, useField, useFieldArray, FieldEntry, FormContext, FieldArrayContext } from '@/vee-validate';
+import { defineComponent, nextTick, onMounted, Ref } from 'vue';
 import * as yup from 'yup';
 import { mountWithHoc, flushPromises } from './helpers';
 
@@ -521,4 +521,66 @@ test('array move initializes the array if undefined', async () => {
   arr.move(0, 0);
   await flushPromises();
   expect(arr.fields.value).toHaveLength(0);
+});
+
+// #4557
+test('child sees an error for invalid value input after insert', async () => {
+  const childrenErrors = new Map();
+  const InputText = defineComponent({
+    props: {
+      name: {
+        type: String,
+        required: true,
+      },
+      debugKey: {
+        type: Number,
+        required: true,
+      },
+    },
+    setup(props) {
+      const { value, errors } = useField(() => props.name);
+      childrenErrors.set(props.debugKey, errors);
+      return {
+        value,
+      };
+    },
+    template: '<input v-model="value" />',
+  });
+
+  let form!: FormContext;
+  let arr!: FieldArrayContext;
+  mountWithHoc({
+    components: {
+      InputText,
+    },
+    setup() {
+      form = useForm({
+        initialValues: {
+          emails: [],
+        },
+        validationSchema: yup.object({
+          emails: yup.array().of(yup.string().email()),
+        }),
+      });
+
+      const childName = (index: number) => `emails[${index}]`;
+      arr = useFieldArray('emails');
+
+      return {
+        arr,
+        childName,
+      };
+    },
+    template: `
+      <InputText v-for="(field, index) of arr.fields.value"
+      :name="childName(index)" :debugKey="field.key"/>
+    `,
+  });
+
+  await flushPromises();
+  expect(arr.fields.value).toHaveLength(0);
+  arr.insert(0, '');
+  form.setFieldValue('emails.1', 'a');
+  await flushPromises();
+  expect(childrenErrors.get(1).value).toStrictEqual(['emails[1] must be a valid email']);
 });
